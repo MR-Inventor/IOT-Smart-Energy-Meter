@@ -1,0 +1,674 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+  <meta charset="UTF-8" />
+  <meta name="viewport" content="width=device-width, initial-scale=1.0"/>
+  <title>PowerSense — Energy Monitor</title>
+  <link href="https://fonts.googleapis.com/css2?family=Bebas+Neue&family=DM+Mono:wght@300;400;500&family=Syne:wght@400;700;800&display=swap" rel="stylesheet"/>
+  <style>
+    :root {
+      --bg:        #080b10;
+      --surface:   #0d1118;
+      --card:      #111720;
+      --border:    #1e2a38;
+      --accent:    #00e5ff;
+      --accent2:   #ff6b35;
+      --accent3:   #7cfc00;
+      --text:      #e2eaf4;
+      --muted:     #4a5a6e;
+      --danger:    #ff3d5a;
+      --glow:      0 0 24px rgba(0,229,255,.18);
+    }
+    *, *::before, *::after { box-sizing: border-box; margin: 0; padding: 0; }
+
+    body {
+      background: var(--bg);
+      color: var(--text);
+      font-family: 'DM Mono', monospace;
+      min-height: 100vh;
+      overflow-x: hidden;
+    }
+
+    /* ── grid noise texture overlay ── */
+    body::before {
+      content: '';
+      position: fixed; inset: 0;
+      background-image:
+        repeating-linear-gradient(0deg, transparent, transparent 39px, rgba(0,229,255,.03) 40px),
+        repeating-linear-gradient(90deg, transparent, transparent 39px, rgba(0,229,255,.03) 40px);
+      pointer-events: none; z-index: 0;
+    }
+
+    /* ── scanline flicker ── */
+    body::after {
+      content: '';
+      position: fixed; inset: 0;
+      background: repeating-linear-gradient(0deg, transparent, transparent 2px, rgba(0,0,0,.06) 3px);
+      pointer-events: none; z-index: 0;
+    }
+
+    /* ────────── HEADER ────────── */
+    header {
+      position: relative; z-index: 10;
+      display: flex; align-items: center; justify-content: space-between;
+      padding: 1.4rem 2.5rem;
+      border-bottom: 1px solid var(--border);
+      background: rgba(8,11,16,.85);
+      backdrop-filter: blur(12px);
+    }
+    .logo {
+      font-family: 'Bebas Neue', sans-serif;
+      font-size: 2rem; letter-spacing: 4px;
+      color: var(--accent);
+      text-shadow: 0 0 18px rgba(0,229,255,.55);
+    }
+    .logo span { color: var(--accent2); }
+
+    .status-badge {
+      display: flex; align-items: center; gap: .5rem;
+      font-size: .72rem; letter-spacing: 2px; text-transform: uppercase;
+      color: var(--accent3);
+    }
+    .status-badge .dot {
+      width: 8px; height: 8px; border-radius: 50%;
+      background: var(--accent3);
+      box-shadow: 0 0 8px var(--accent3);
+      animation: pulse 1.6s ease-in-out infinite;
+    }
+    @keyframes pulse { 0%,100%{opacity:1} 50%{opacity:.3} }
+
+    .timestamp { font-size: .68rem; color: var(--muted); letter-spacing: 1px; }
+
+    /* ────────── MAIN LAYOUT ────────── */
+    main {
+      position: relative; z-index: 1;
+      max-width: 1280px; margin: 0 auto;
+      padding: 2.5rem 2rem;
+      display: grid;
+      grid-template-rows: auto auto auto;
+      gap: 1.8rem;
+    }
+
+    /* ── hero row ── */
+    .hero-row {
+      display: grid;
+      grid-template-columns: 1fr 1fr 1fr 1.4fr;
+      gap: 1.4rem;
+    }
+
+    /* ── card base ── */
+    .card {
+      background: var(--card);
+      border: 1px solid var(--border);
+      border-radius: 12px;
+      padding: 1.6rem 1.8rem;
+      position: relative;
+      overflow: hidden;
+      transition: border-color .3s, box-shadow .3s;
+    }
+    .card:hover {
+      border-color: var(--accent);
+      box-shadow: var(--glow);
+    }
+    .card::before {
+      content: '';
+      position: absolute; top: 0; left: 0; right: 0; height: 2px;
+      background: linear-gradient(90deg, transparent, var(--accent), transparent);
+      opacity: 0; transition: opacity .3s;
+    }
+    .card:hover::before { opacity: 1; }
+
+    .card-label {
+      font-size: .65rem; letter-spacing: 3px; text-transform: uppercase;
+      color: var(--muted); margin-bottom: .7rem;
+    }
+    .card-value {
+      font-family: 'Bebas Neue', sans-serif;
+      font-size: 3.2rem; line-height: 1;
+      color: var(--text);
+    }
+    .card-unit {
+      font-family: 'DM Mono', monospace;
+      font-size: .75rem; color: var(--muted); margin-top: .3rem;
+    }
+    .card-icon {
+      position: absolute; top: 1.2rem; right: 1.4rem;
+      font-size: 1.4rem; opacity: .35;
+    }
+
+    .card.voltage .card-value { color: var(--accent); }
+    .card.current .card-value { color: #a78bfa; }
+    .card.power   .card-value { color: var(--accent2); }
+
+    /* ── cost card ── */
+    .card.cost {
+      background: linear-gradient(135deg, #0f1f12 0%, #0a1a10 100%);
+      border-color: rgba(124,252,0,.2);
+    }
+    .card.cost .card-value { font-size: 3.6rem; color: var(--accent3); }
+    .card.cost::before { background: linear-gradient(90deg, transparent, var(--accent3), transparent); }
+    .card.cost:hover { border-color: var(--accent3); box-shadow: 0 0 28px rgba(124,252,0,.15); }
+
+    /* ── sparkbar inside cards ── */
+    .sparkbar {
+      margin-top: 1rem; height: 3px; border-radius: 2px;
+      background: var(--border); overflow: hidden;
+    }
+    .sparkbar-fill {
+      height: 100%; border-radius: 2px;
+      background: var(--accent);
+      transition: width 1s ease;
+    }
+    .card.current .sparkbar-fill { background: #a78bfa; }
+    .card.power   .sparkbar-fill { background: var(--accent2); }
+    .card.cost    .sparkbar-fill { background: var(--accent3); }
+
+    /* ────────── CHART SECTION ────────── */
+    .chart-row {
+      display: grid;
+      grid-template-columns: 2fr 1fr;
+      gap: 1.4rem;
+    }
+
+    .chart-card {
+      background: var(--card);
+      border: 1px solid var(--border);
+      border-radius: 12px;
+      padding: 1.6rem 1.8rem;
+    }
+    .chart-header {
+      display: flex; align-items: center; justify-content: space-between;
+      margin-bottom: 1.4rem;
+    }
+    .chart-title {
+      font-family: 'Syne', sans-serif;
+      font-size: .9rem; font-weight: 700; letter-spacing: 2px;
+      text-transform: uppercase; color: var(--text);
+    }
+    .chart-legend {
+      display: flex; gap: 1rem;
+    }
+    .legend-item {
+      display: flex; align-items: center; gap: .35rem;
+      font-size: .65rem; letter-spacing: 1.5px; text-transform: uppercase; color: var(--muted);
+    }
+    .legend-dot { width: 6px; height: 6px; border-radius: 50%; }
+
+    canvas#powerChart { width: 100% !important; height: 180px !important; }
+
+    /* ── ring gauges ── */
+    .gauges-card {
+      display: flex; flex-direction: column; gap: 1.4rem;
+      background: var(--card);
+      border: 1px solid var(--border);
+      border-radius: 12px;
+      padding: 1.6rem 1.8rem;
+    }
+    .gauge-label {
+      font-family: 'Syne', sans-serif;
+      font-size: .9rem; font-weight: 700; letter-spacing: 2px;
+      text-transform: uppercase; color: var(--text);
+      margin-bottom: 1rem;
+    }
+    .ring-row {
+      display: flex; justify-content: space-around; align-items: center; gap: 1rem;
+    }
+    .ring-wrap { display: flex; flex-direction: column; align-items: center; gap: .5rem; }
+    .ring-wrap svg { overflow: visible; }
+    .ring-name { font-size: .62rem; letter-spacing: 2px; text-transform: uppercase; color: var(--muted); }
+    .ring-val  { font-family: 'Bebas Neue', sans-serif; font-size: 1.1rem; }
+
+    /* ── circle track ── */
+    .ring-track { fill: none; stroke: var(--border); stroke-width: 5; }
+    .ring-fill  { fill: none; stroke-width: 5; stroke-linecap: round;
+                  transition: stroke-dashoffset 1.2s cubic-bezier(.4,0,.2,1); }
+
+    /* ────────── STATS ROW ────────── */
+    .stats-row {
+      display: grid;
+      grid-template-columns: repeat(4, 1fr);
+      gap: 1.4rem;
+    }
+    .stat-card {
+      background: var(--surface);
+      border: 1px solid var(--border);
+      border-radius: 10px;
+      padding: 1.2rem 1.4rem;
+    }
+    .stat-label { font-size: .63rem; letter-spacing: 2.5px; text-transform: uppercase; color: var(--muted); margin-bottom: .5rem; }
+    .stat-value { font-family: 'Syne', sans-serif; font-size: 1.4rem; font-weight: 800; color: var(--text); }
+    .stat-sub   { font-size: .65rem; color: var(--muted); margin-top: .2rem; }
+
+    /* ────────── SERIAL LOG ────────── */
+    .log-card {
+      background: var(--surface);
+      border: 1px solid var(--border);
+      border-radius: 12px;
+      padding: 1.4rem 1.8rem;
+    }
+    .log-header {
+      display: flex; align-items: center; justify-content: space-between;
+      margin-bottom: 1rem;
+    }
+    .log-title {
+      font-family: 'Syne', sans-serif; font-size: .9rem; font-weight: 700;
+      letter-spacing: 2px; text-transform: uppercase; color: var(--text);
+    }
+    .log-clear {
+      font-size: .65rem; color: var(--muted); letter-spacing: 1.5px;
+      cursor: pointer; text-transform: uppercase;
+      border: 1px solid var(--border); border-radius: 4px; padding: .2rem .7rem;
+      background: none; color: var(--muted); transition: all .2s;
+    }
+    .log-clear:hover { border-color: var(--danger); color: var(--danger); }
+    #logBox {
+      background: #050709;
+      border: 1px solid var(--border);
+      border-radius: 6px;
+      padding: 1rem 1.2rem;
+      height: 140px;
+      overflow-y: auto;
+      font-size: .72rem;
+      line-height: 1.8;
+      color: var(--accent);
+    }
+    #logBox .log-line { color: var(--muted); }
+    #logBox .log-line .v  { color: var(--accent); }
+    #logBox .log-line .i  { color: #a78bfa; }
+    #logBox .log-line .p  { color: var(--accent2); }
+    #logBox .log-line .c  { color: var(--accent3); }
+
+    /* ── scrollbar ── */
+    #logBox::-webkit-scrollbar { width: 4px; }
+    #logBox::-webkit-scrollbar-track { background: transparent; }
+    #logBox::-webkit-scrollbar-thumb { background: var(--border); border-radius: 2px; }
+
+    /* ────────── FOOTER ────────── */
+    footer {
+      position: relative; z-index: 1;
+      text-align: center;
+      padding: 1.4rem;
+      font-size: .65rem; letter-spacing: 2px;
+      color: var(--muted);
+      border-top: 1px solid var(--border);
+    }
+    footer span { color: var(--accent); }
+
+    /* ── alerts ── */
+    .alert-banner {
+      display: none;
+      background: rgba(255,61,90,.08);
+      border: 1px solid rgba(255,61,90,.3);
+      border-radius: 8px;
+      padding: .8rem 1.4rem;
+      font-size: .72rem;
+      color: var(--danger);
+      letter-spacing: 1px;
+      animation: fadein .4s ease;
+    }
+    .alert-banner.show { display: flex; align-items: center; gap: .8rem; }
+    @keyframes fadein { from{opacity:0;transform:translateY(-6px)} to{opacity:1;transform:none} }
+
+    /* ── responsive ── */
+    @media(max-width:900px) {
+      .hero-row  { grid-template-columns: 1fr 1fr; }
+      .chart-row { grid-template-columns: 1fr; }
+      .stats-row { grid-template-columns: 1fr 1fr; }
+    }
+    @media(max-width:560px) {
+      .hero-row  { grid-template-columns: 1fr; }
+      .stats-row { grid-template-columns: 1fr; }
+    }
+  </style>
+</head>
+<body>
+
+<!-- ── HEADER ── -->
+<header>
+  <div class="logo">Power<span>Sense</span></div>
+  <div style="display:flex;flex-direction:column;align-items:center;gap:.3rem">
+    <div class="status-badge"><div class="dot"></div>LIVE · ESP32 ACS712</div>
+    <div class="timestamp" id="clock">—</div>
+  </div>
+  <div style="text-align:right;font-size:.68rem;color:var(--muted);line-height:1.7">
+    COST / kWh<br><span style="color:var(--accent3);font-family:'Bebas Neue';font-size:1.2rem">₹8.00</span>
+  </div>
+</header>
+
+<main>
+
+  <!-- ── ALERT BANNER ── -->
+  <div class="alert-banner" id="alertBanner">
+    ⚠ &nbsp; HIGH POWER DETECTED — Check load on circuit
+  </div>
+
+  <!-- ── HERO METRICS ── -->
+  <div class="hero-row">
+
+    <div class="card voltage">
+      <div class="card-label">Voltage (RMS)</div>
+      <div class="card-value" id="voltVal">—</div>
+      <div class="card-unit">VOLTS AC</div>
+      <div class="card-icon">⚡</div>
+      <div class="sparkbar"><div class="sparkbar-fill" id="voltBar" style="width:0%"></div></div>
+    </div>
+
+    <div class="card current">
+      <div class="card-label">Current (RMS)</div>
+      <div class="card-value" id="currVal">—</div>
+      <div class="card-unit">AMPERES</div>
+      <div class="card-icon">〜</div>
+      <div class="sparkbar"><div class="sparkbar-fill" id="currBar" style="width:0%"></div></div>
+    </div>
+
+    <div class="card power">
+      <div class="card-label">Real Power</div>
+      <div class="card-value" id="powVal">—</div>
+      <div class="card-unit">WATTS</div>
+      <div class="card-icon">🔥</div>
+      <div class="sparkbar"><div class="sparkbar-fill" id="powBar" style="width:0%"></div></div>
+    </div>
+
+    <div class="card cost">
+      <div class="card-label">Total Cost (Session)</div>
+      <div class="card-value" id="costVal">₹—</div>
+      <div class="card-unit">RUPEES · kWh × ₹8</div>
+      <div class="card-icon">💰</div>
+      <div class="sparkbar"><div class="sparkbar-fill" id="costBar" style="width:0%"></div></div>
+    </div>
+
+  </div>
+
+  <!-- ── CHART + GAUGES ── -->
+  <div class="chart-row">
+
+    <div class="chart-card">
+      <div class="chart-header">
+        <div class="chart-title">Power Over Time</div>
+        <div class="chart-legend">
+          <div class="legend-item"><div class="legend-dot" style="background:var(--accent2)"></div> Watts</div>
+          <div class="legend-item"><div class="legend-dot" style="background:var(--accent)"></div> Volts/10</div>
+        </div>
+      </div>
+      <canvas id="powerChart"></canvas>
+    </div>
+
+    <div class="gauges-card">
+      <div class="gauge-label">Load Gauges</div>
+      <div class="ring-row">
+        <!-- Voltage ring -->
+        <div class="ring-wrap">
+          <svg width="90" height="90" viewBox="0 0 90 90">
+            <circle class="ring-track" cx="45" cy="45" r="36"/>
+            <circle class="ring-fill" id="vRing" cx="45" cy="45" r="36"
+              stroke="var(--accent)"
+              stroke-dasharray="226.2"
+              stroke-dashoffset="226.2"
+              transform="rotate(-90 45 45)"/>
+            <text x="45" y="50" text-anchor="middle"
+              font-family="'Bebas Neue',sans-serif" font-size="14" fill="var(--text)" id="vRingTxt">0V</text>
+          </svg>
+          <div class="ring-name">Voltage</div>
+        </div>
+        <!-- Current ring -->
+        <div class="ring-wrap">
+          <svg width="90" height="90" viewBox="0 0 90 90">
+            <circle class="ring-track" cx="45" cy="45" r="36"/>
+            <circle class="ring-fill" id="iRing" cx="45" cy="45" r="36"
+              stroke="#a78bfa"
+              stroke-dasharray="226.2"
+              stroke-dashoffset="226.2"
+              transform="rotate(-90 45 45)"/>
+            <text x="45" y="50" text-anchor="middle"
+              font-family="'Bebas Neue',sans-serif" font-size="14" fill="var(--text)" id="iRingTxt">0A</text>
+          </svg>
+          <div class="ring-name">Current</div>
+        </div>
+        <!-- Power ring -->
+        <div class="ring-wrap">
+          <svg width="90" height="90" viewBox="0 0 90 90">
+            <circle class="ring-track" cx="45" cy="45" r="36"/>
+            <circle class="ring-fill" id="pRing" cx="45" cy="45" r="36"
+              stroke="var(--accent2)"
+              stroke-dasharray="226.2"
+              stroke-dashoffset="226.2"
+              transform="rotate(-90 45 45)"/>
+            <text x="45" y="50" text-anchor="middle"
+              font-family="'Bebas Neue',sans-serif" font-size="14" fill="var(--text)" id="pRingTxt">0W</text>
+          </svg>
+          <div class="ring-name">Power</div>
+        </div>
+      </div>
+    </div>
+
+  </div>
+
+  <!-- ── STATS ── -->
+  <div class="stats-row">
+    <div class="stat-card">
+      <div class="stat-label">Energy (kWh)</div>
+      <div class="stat-value" id="statEnergy">0.0000</div>
+      <div class="stat-sub">Session total</div>
+    </div>
+    <div class="stat-card">
+      <div class="stat-label">Peak Power</div>
+      <div class="stat-value" id="statPeak">0 W</div>
+      <div class="stat-sub">This session</div>
+    </div>
+    <div class="stat-card">
+      <div class="stat-label">Avg Power</div>
+      <div class="stat-value" id="statAvg">0 W</div>
+      <div class="stat-sub">Rolling average</div>
+    </div>
+    <div class="stat-card">
+      <div class="stat-label">Readings</div>
+      <div class="stat-value" id="statCount">0</div>
+      <div class="stat-sub">Data points received</div>
+    </div>
+  </div>
+
+  <!-- ── SERIAL LOG ── -->
+  <div class="log-card">
+    <div class="log-header">
+      <div class="log-title">Serial Monitor</div>
+      <button class="log-clear" onclick="clearLog()">Clear</button>
+    </div>
+    <div id="logBox"><div class="log-line" style="color:var(--muted)">» Waiting for ESP32 data...</div></div>
+  </div>
+
+</main>
+
+<footer>PowerSense Dashboard &nbsp;·&nbsp; ESP32 ACS712 Energy Monitor &nbsp;·&nbsp; <span>Live</span></footer>
+
+<!-- ── Chart.js ── -->
+<script src="https://cdnjs.cloudflare.com/ajax/libs/Chart.js/4.4.1/chart.umd.min.js"></script>
+<script>
+/* ═══════════════════════════════════════
+   State
+═══════════════════════════════════════ */
+let peakPower  = 0;
+let readingCnt = 0;
+let powerSum   = 0;
+
+const MAX_LABELS = 30;
+const chartLabels = [];
+const chartPower  = [];
+const chartVolts  = [];
+
+/* ═══════════════════════════════════════
+   Clock
+═══════════════════════════════════════ */
+function updateClock() {
+  const now = new Date();
+  document.getElementById('clock').textContent =
+    now.toLocaleTimeString('en-IN', {hour12:false}) + '  ' + now.toLocaleDateString('en-IN');
+}
+setInterval(updateClock, 1000); updateClock();
+
+/* ═══════════════════════════════════════
+   Chart
+═══════════════════════════════════════ */
+const ctx = document.getElementById('powerChart').getContext('2d');
+const chart = new Chart(ctx, {
+  type: 'line',
+  data: {
+    labels: chartLabels,
+    datasets: [
+      {
+        label: 'Watts',
+        data: chartPower,
+        borderColor: 'rgba(255,107,53,1)',
+        backgroundColor: 'rgba(255,107,53,.08)',
+        fill: true,
+        tension: 0.4,
+        pointRadius: 0,
+        borderWidth: 2,
+      },
+      {
+        label: 'V/10',
+        data: chartVolts,
+        borderColor: 'rgba(0,229,255,.7)',
+        backgroundColor: 'rgba(0,229,255,.04)',
+        fill: true,
+        tension: 0.4,
+        pointRadius: 0,
+        borderWidth: 1.5,
+      }
+    ]
+  },
+  options: {
+    animation: false,
+    responsive: true,
+    maintainAspectRatio: false,
+    plugins: { legend: { display: false } },
+    scales: {
+      x: {
+        ticks: { color: '#4a5a6e', font: { family: 'DM Mono', size: 10 }, maxTicksLimit: 8 },
+        grid:  { color: 'rgba(30,42,56,.6)' },
+        border:{ color: 'transparent' }
+      },
+      y: {
+        ticks: { color: '#4a5a6e', font: { family: 'DM Mono', size: 10 } },
+        grid:  { color: 'rgba(30,42,56,.6)' },
+        border:{ color: 'transparent' }
+      }
+    }
+  }
+});
+
+/* ═══════════════════════════════════════
+   Ring gauge helper
+═══════════════════════════════════════ */
+function setRing(id, pct) {
+  const circ = 226.2;
+  const offset = circ - (pct / 100) * circ;
+  document.getElementById(id).style.strokeDashoffset = Math.max(0, offset);
+}
+
+/* ═══════════════════════════════════════
+   Update dashboard from data
+═══════════════════════════════════════ */
+function updateDashboard(d) {
+  // Cards
+  document.getElementById('voltVal').textContent = d.voltage.toFixed(1);
+  document.getElementById('currVal').textContent = d.current.toFixed(2);
+  document.getElementById('powVal').textContent  = d.power.toFixed(0);
+  document.getElementById('costVal').textContent = '₹' + d.cost.toFixed(2);
+
+  // Sparkbars (max guess: 260V, 5A, 1000W, ₹5)
+  document.getElementById('voltBar').style.width = Math.min((d.voltage/260)*100, 100) + '%';
+  document.getElementById('currBar').style.width = Math.min((d.current/5)*100, 100) + '%';
+  document.getElementById('powBar').style.width  = Math.min((d.power/1000)*100, 100) + '%';
+  document.getElementById('costBar').style.width = Math.min((d.cost/5)*100, 100) + '%';
+
+  // Rings
+  setRing('vRing', Math.min((d.voltage/260)*100, 100));
+  setRing('iRing', Math.min((d.current/5)*100, 100));
+  setRing('pRing', Math.min((d.power/1000)*100, 100));
+  document.getElementById('vRingTxt').textContent = d.voltage.toFixed(0)+'V';
+  document.getElementById('iRingTxt').textContent = d.current.toFixed(1)+'A';
+  document.getElementById('pRingTxt').textContent = d.power.toFixed(0)+'W';
+
+  // Stats
+  readingCnt++;
+  powerSum += d.power;
+  if (d.power > peakPower) peakPower = d.power;
+  document.getElementById('statEnergy').textContent = d.energy.toFixed(4);
+  document.getElementById('statPeak').textContent   = peakPower.toFixed(0) + ' W';
+  document.getElementById('statAvg').textContent    = (powerSum/readingCnt).toFixed(1) + ' W';
+  document.getElementById('statCount').textContent  = readingCnt;
+
+  // Alert
+  const ab = document.getElementById('alertBanner');
+  if (d.power > 800) { ab.classList.add('show'); }
+  else { ab.classList.remove('show'); }
+
+  // Chart
+  const t = new Date().toLocaleTimeString('en-IN',{hour12:false});
+  chartLabels.push(t);
+  chartPower.push(d.power);
+  chartVolts.push(d.voltage / 10);
+  if (chartLabels.length > MAX_LABELS) {
+    chartLabels.shift(); chartPower.shift(); chartVolts.shift();
+  }
+  chart.update();
+
+  // Log
+  addLog(d);
+}
+
+/* ═══════════════════════════════════════
+   Log
+═══════════════════════════════════════ */
+function addLog(d) {
+  const box = document.getElementById('logBox');
+  const t   = new Date().toLocaleTimeString('en-IN',{hour12:false});
+  const line = document.createElement('div');
+  line.className = 'log-line';
+  line.innerHTML =
+    `<span style="color:var(--muted)">[${t}]</span> ` +
+    `V: <span class="v">${d.voltage.toFixed(1)} V</span>  ` +
+    `I: <span class="i">${d.current.toFixed(3)} A</span>  ` +
+    `P: <span class="p">${d.power.toFixed(1)} W</span>  ` +
+    `E: ${d.energy.toFixed(4)} kWh  ` +
+    `Cost: <span class="c">₹${d.cost.toFixed(2)}</span>`;
+  box.appendChild(line);
+  box.scrollTop = box.scrollHeight;
+}
+
+function clearLog() {
+  document.getElementById('logBox').innerHTML =
+    '<div class="log-line" style="color:var(--muted)">» Log cleared.</div>';
+}
+
+/* ═══════════════════════════════════════
+   WebSocket — connect to run.py server
+   No demo — only real ESP32 data shown
+═══════════════════════════════════════ */
+function connectWS() {
+  const ws = new WebSocket('ws://localhost:8765');
+
+  ws.onopen = () => {
+    document.querySelector('.status-badge').innerHTML =
+      '<div class="dot"></div> LIVE · ESP32 CONNECTED';
+    console.log('WebSocket connected to run.py');
+  };
+
+  ws.onmessage = (evt) => {
+    try {
+      const d = JSON.parse(evt.data);
+      updateDashboard(d);
+    } catch(e) { console.warn('Bad JSON:', evt.data); }
+  };
+
+  ws.onerror = ws.onclose = () => {
+    document.querySelector('.status-badge').innerHTML =
+      '<div class="dot" style="background:var(--danger);box-shadow:0 0 8px var(--danger)"></div> WAITING FOR ESP32…';
+    setTimeout(connectWS, 3000);  // keep retrying
+  };
+}
+
+connectWS();
+</script>
+</body>
+</html>
